@@ -1,0 +1,153 @@
+# example workflow for building and releasing a Flutter app to Google Play on push or manual trigger
+name: Google Play Production Release
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build_and_release-to-stores:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🚀 Cache pub deps
+        uses: actions/cache@v3
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: ${{ runner.os }}-pub-
+
+      - name: ☕️ Setup Java (Temurin 17)
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # TODO: you should change the Flutter version and channel as needed
+      - name: 🦋 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ vars.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: 📥 Get dependencies
+        run: flutter pub get
+
+      - name: 🔍 Flutter Doctor
+        run: flutter doctor
+
+      - name: 🏗️ Run build_runner
+        run: flutter pub run build_runner build --delete-conflicting-outputs
+
+      # TODO: you should add the Android keystore file as Base64 encoded secret
+      - name: 🔐 Download Android keystore
+        id: android_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: key.jks
+          fileDir: "./android/app"
+          encodedString: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      # TODO: you should add the Google Services (Firebase) JSON as BASE64 secret
+      - name: 📝 Download google-services.json
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: google-services.json
+          fileDir: ./android/app
+          encodedString: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+
+      # TODO: you add the key alias and password as needed secrets
+      - name: 📝 Create key.properties
+        run: |
+          echo "storeFile=key.jks" > android/key.properties
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+
+      - name: 📦 Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+      - name: 📦 Cache Flutter build folder
+        uses: actions/cache@v3
+        with:
+          path: build
+          key: ${{ runner.os }}-flutter-build-${{ hashFiles('pubspec.lock', '**/*.gradle*', 'android/app/build.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-build-
+
+      - name: 📦 Build Android App Bundle
+        run: flutter build appbundle
+
+      - name: 📱 Build Android APK (Release)
+        run: flutter build apk --release
+
+      - name: 🐛 Build Android APK (Debug)
+        run: flutter build apk --debug
+
+      - name: 💎 Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.1.5"
+
+      - name: 📦 Cache bundle dependencies
+        uses: actions/cache@v4
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-gems-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: ${{ runner.os }}-gems-
+
+      - name: 📥 Download bundle dependencies
+        run: |
+          gem install bundler
+          bundle config path vendor/bundle
+          bundle install
+      - name: 🚀 Release to Google Play
+        env:
+          SUPPLY_PACKAGE_NAME: ${{ secrets.ANDROID_PACKAGE_NAME }}
+          SUPPLY_JSON_KEY_DATA: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          bundle exec fastlane supply \
+          --aab build/app/outputs/bundle/release/app-release.aab \
+          --track production
+          --json_key_data ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+
+      - name: 🏷️ Get app version
+        id: get_version
+        run: |
+          RAW_VERSION=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+          VERSION=$(echo $RAW_VERSION | cut -d+ -f1)   # before '+'
+          BUILD=$(echo $RAW_VERSION | cut -d+ -f2)     # after '+'
+          TAG="v${VERSION}-${BUILD}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: 🏷️ Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release v${{ steps.get_version.outputs.version }}
+          body: |
+            🚀 Production release published to Google Play.
+            - Version: ${{ steps.get_version.outputs.version }}
+          files: |
+            build/app/outputs/bundle/release/app-release.aab
+            build/app/outputs/flutter-apk/app-release.apk
+            build/app/outputs/flutter-apk/app-debug.apk
+
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

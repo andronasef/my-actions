@@ -1,0 +1,120 @@
+# an example workflow for building a Flutter Android APK and App Bundle on push or manual trigger
+name: Flutter Apk Build On Push
+
+on:
+  # Trigger the workflow on push or manual dispatch
+  push:
+  workflow_dispatch:
+
+jobs:
+  apkbuild:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📂 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🚀 Cache pub deps
+        uses: actions/cache@v3
+        with:
+          path: ~/.pub-cache
+          key: ${{ runner.os }}-pub-${{ hashFiles('**/pubspec.yaml') }}
+          restore-keys: ${{ runner.os }}-pub-
+
+      - name: 📦 Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android
+            ~/.cache
+            $ANDROID_HOME
+            $ANDROID_SDK_ROOT
+          key: ${{ runner.os }}-android-sdk-${{ hashFiles('**/build.gradle', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-android-sdk-
+
+      - name: ☕️ Setup Java (Temurin 17)
+        uses: actions/setup-java@v3
+        with:
+          distribution: temurin
+          java-version: "17"
+      # TODO: you should change the Flutter version and channel as needed
+      - name: 🦋 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ vars.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: 📥 Get dependencies
+        run: flutter pub get
+
+      - name: 🔍 Flutter Doctor
+        run: flutter doctor
+      # TODO: you should add the Android keystore file as Base64 encoded secret
+      - name: 🔐 Download Android keystore
+        id: android_keystore
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: key.jks
+          fileDir: "./android/app"
+          encodedString: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+
+      # TODO: you should add the Google Services (Firebase) JSON as BASE64 secret
+      - name: 📝 Download google-services.json
+        uses: timheuer/base64-to-file@v1.2
+        with:
+          fileName: google-services.json
+          fileDir: "./android/app"
+          encodedString: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+
+      # TODO: you add the key alias and password as needed secrets
+      - name: 📝 Create key.properties
+        run: |
+          echo "storeFile=key.jks" > android/key.properties
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> android/key.properties
+
+      - name: 📦 Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: ${{ runner.os }}-gradle-
+
+      - name: 📦 Cache Flutter build folder
+        uses: actions/cache@v3
+        with:
+          path: build
+          key: ${{ runner.os }}-flutter-build-${{ hashFiles('pubspec.lock', '**/*.gradle*', 'android/app/build.gradle') }}
+          restore-keys: |
+            ${{ runner.os }}-flutter-build-
+
+      - name: 📱 Build Android Apk Release
+        run: flutter build apk --release
+
+      - name: 🐛 Build Android Apk Debug
+        run: flutter build apk --debug
+
+      - name: 📦 Build Android App Bundle Release
+        run: flutter build appbundle --release
+
+      - name: 📤 Apk Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release.apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      - name: 📤 Apk Debug Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug.apk
+          path: build/app/outputs/flutter-apk/app-debug.apk
+
+      - name: 📤 App Bundle Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release.aab
+          path: build/app/outputs/bundle/release/app-release.aab
