@@ -115,6 +115,7 @@ jobs:
           gem install bundler
           bundle config path vendor/bundle
           bundle install
+      # TODO: you should add the Google Play service account key as RAW JSON secret and the Android package name as needed secret
       - name: 🚀 Release to Google Play
         env:
           SUPPLY_PACKAGE_NAME: ${{ secrets.ANDROID_PACKAGE_NAME }}
