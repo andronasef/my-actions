@@ -124,7 +124,6 @@ jobs:
           bundle exec fastlane supply \
           --aab build/app/outputs/bundle/release/app-release.aab \
           --track production
-          --json_key_data ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
 
       - name: 🏷️ Get app version
         id: get_version
