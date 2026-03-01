@@ -115,6 +115,37 @@ jobs:
 
       # 🚀 Upload using the copy in release_artifacts
 
+      - name: 🏷️ Get app version
+        id: get_version
+        run: |
+          RAW_VERSION=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
+          VERSION=$(echo $RAW_VERSION | cut -d+ -f1)
+          BUILD=$(echo $RAW_VERSION | cut -d+ -f2)
+          TAG="v${VERSION}-${BUILD}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "build=$BUILD" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      - name: 📋 Read Changelog
+        id: changelog
+        run: |
+          VERSION="${{ steps.get_version.outputs.version }}"
+          BUILD="${{ steps.get_version.outputs.build }}"
+          NOTES=""
+          if [ -f "CHANGELOG.md" ]; then
+            ESCAPED_VERSION=$(echo "$VERSION" | sed 's/\./\\./g')
+            NOTES=$(awk "BEGIN{found=0} /^## .*\[?v?${ESCAPED_VERSION}(\]|[^0-9]|$)/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md | sed '/^[[:space:]]*$/d')
+          fi
+          if [ -z "$NOTES" ]; then
+            NOTES="🚀 Production release published to Google Play."
+          fi
+          CHANGELOG_DIR="fastlane/metadata/android/en-US/changelogs"
+          mkdir -p "$CHANGELOG_DIR"
+          echo "$NOTES" > "$CHANGELOG_DIR/${BUILD}.txt"
+          echo "notes<<ENDOFCHANGELOG" >> $GITHUB_OUTPUT
+          echo "$NOTES" >> $GITHUB_OUTPUT
+          echo "ENDOFCHANGELOG" >> $GITHUB_OUTPUT
+
       - name: 📝 Download Google play developer google-services.json
         uses: timheuer/base64-to-file@v1.2
         with:
@@ -127,17 +158,8 @@ jobs:
             --json_key ./fastlane/google-services.json \
             --package_name "${{ secrets.ANDROID_PACKAGE_NAME }}" \
             --aab release_artifacts/app-release.aab \
-            --track production
-      - name: 🏷️ Get app version
-        id: get_version
-        run: |
-          RAW_VERSION=$(grep '^version: ' pubspec.yaml | sed 's/version: //')
-          VERSION=$(echo $RAW_VERSION | cut -d+ -f1)   
-          BUILD=$(echo $RAW_VERSION | cut -d+ -f2)     
-          TAG="v${VERSION}-${BUILD}"
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "build=$BUILD" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+            --track production \
+            --metadata_path ./fastlane/metadata/android
 
       # 🏷️ GitHub Release using the copies in release_artifacts
       - name: 🏷️ Create GitHub Release
@@ -145,9 +167,7 @@ jobs:
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
           name: Release v${{ steps.get_version.outputs.version }}
-          body: |
-            🚀 Production release published to Google Play.
-            - Version: ${{ steps.get_version.outputs.version }}
+          body: ${{ steps.changelog.outputs.notes }}
           files: |
             release_artifacts/app-release.aab
             release_artifacts/app-release.apk
